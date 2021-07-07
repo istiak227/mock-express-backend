@@ -1,86 +1,109 @@
+"use strict";
+const sqlite3 = require("sqlite3").verbose();
+const database = new sqlite3.Database("./my.db");
 const express = require("express");
+const bodyParser = require("body-parser");
 const app = express();
-var db = require("./database.js");
-var md5 = require("md5")
+const router = express.Router();
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const SECRET_KEY = "secretkey23456";
 
-var bodyParser = require("body-parser");
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+router.use(bodyParser.urlencoded({ extended: false }));
+router.use(bodyParser.json());
 
-const port = 8000;
+const createUsersTable = () => {
+  const sqlQuery = `
+          CREATE TABLE IF NOT EXISTS users (
+          id integer PRIMARY KEY,
+          name text,
+          email text UNIQUE,
+          password text)`;
 
-app.listen(port, () => {
-  console.log("Express is runnis at this port");
+  return database.run(sqlQuery);
+};
+
+const findUserByEmail = (email, cb) => {
+  return database.get(
+    `SELECT * FROM users WHERE email = ?`,
+    [email],
+    (err, row) => {
+      cb(err, row);
+    }
+  );
+};
+
+const createUser = (user, cb) => {
+  return database.run(
+    "INSERT INTO users (name, email, password) VALUES (?,?,?)",
+    user,
+    (err) => {
+      cb(err);
+    }
+  );
+};
+
+createUsersTable();
+
+router.get("/", (req, res) => {
+  res.status(200).send("This is an authentication server");
 });
 
-app.get("/", (req, res) => {
-  res.json({
-    message: "OK",
+router.post("/register", (req, res) => {
+  const name = req.body.name;
+  const email = req.body.email;
+  const password = bcrypt.hashSync(req.body.password);
+
+  createUser([name, email, password], (err) => {
+    if (err) return res.status(500).send("Server error!");
+    findUserByEmail(email, (err, user) => {
+      if (err) return res.status(500).send("Server error!");
+      const expiresIn = 24 * 60 * 60;
+      const accessToken = jwt.sign({ id: user.id }, SECRET_KEY, {
+        expiresIn: expiresIn,
+      });
+      res.status(200).send({
+        user: user,
+        access_token: accessToken,
+        expires_in: expiresIn,
+      });
+    });
   });
 });
 
-app.get("/api/users", (req, res, next) => {
-  const sql = "select * from user";
+router.post("/login", (req, res) => {
+  const email = req.body.email;
+  const password = req.body.password;
+  findUserByEmail(email, (err, user) => {
+    if (err) return res.status(500).send("Server error!");
+    if (!user) return res.status(404).send("User not found!");
+    const result = bcrypt.compareSync(password, user.password);
+    if (!result) return res.status(401).send("Password not valid!");
+
+    const expiresIn = 24 * 60 * 60;
+    const accessToken = jwt.sign({ id: user.id }, SECRET_KEY, {
+      expiresIn: expiresIn,
+    });
+    res
+      .status(200)
+      .send({ user: user, access_token: accessToken, expires_in: expiresIn });
+  });
+});
+
+app.get("/users", (req, res, next) => {
+  const sql = "select * from users";
   const params = [];
-  db.all(sql, params, (err, rows) => {
+  database.all(sql, params, (err, rows) => {
     if (err) {
       res.status(400).json({ error: err.message });
       return;
     }
-    res.json({
-      message: "success",
-      data: rows,
-    });
+    res.json(rows);
   });
 });
 
-app.get("/api/user/:id", (req, res, next) => {
-  var sql = "select * from user where id = ?"
-  var params = [req.params.id]
-  db.get(sql, params, (err, row) => {
-      if (err) {
-        res.status(400).json({"error":err.message});
-        return;
-      }
-      res.json({
-          "message":"success",
-          "data":row
-      })
-    });
-});
-
-app.post("/api/user/", (req, res, next) => {
-  var errors=[]
-  if (!req.body.password){
-      errors.push("No password specified");
-  }
-  if (!req.body.email){
-      errors.push("No email specified");
-  }
-  if (errors.length){
-      res.status(400).json({"error":errors.join(",")});
-      return;
-  }
-  var data = {
-      name: req.body.name,
-      email: req.body.email,
-      password : md5(req.body.password)
-  }
-  var sql ='INSERT INTO user (name, email, password) VALUES (?,?,?)'
-  var params =[data.name, data.email, data.password]
-  db.run(sql, params, function (err, result) {
-      if (err){
-          res.status(400).json({"error": err.message})
-          return;
-      }
-      res.json({
-          "message": "success",
-          "data": data,
-          "id" : this.lastID
-      })
-  });
-})
-
-app.use((req, res) => {
-  res.status(404);
+app.use(router);
+const port = process.env.PORT || 8000;
+const server = app.listen(port, () => {
+  console.log("Server listening at http://localhost:" + port);
 });
