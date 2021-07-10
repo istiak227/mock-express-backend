@@ -1,5 +1,6 @@
 "use strict";
 const sqlite3 = require("sqlite3").verbose();
+const cors = require('cors')
 const database = new sqlite3.Database("./my.db");
 const express = require("express");
 const bodyParser = require("body-parser");
@@ -101,6 +102,8 @@ app.get("/users", (req, res, next) => {
     res.json(rows);
   });
 });
+
+app.use(cors())
 
 app.use(router);
 const port = process.env.PORT || 8000;
